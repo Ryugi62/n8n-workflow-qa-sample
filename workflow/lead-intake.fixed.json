@@ -1,0 +1,210 @@
+{
+  "name": "Lead intake - classify and log (SAMPLE, fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000001",
+      "name": "Lead webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "00000000-0000-4000-8000-00000000abcd",
+      "credentials": {
+        "httpHeaderAuth": { "id": "sample-cred-2", "name": "Lead form shared secret" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsProcessedInPreviousExecutions",
+        "dedupeValue": "={{ $json.body.event_id + ($json.headers['x-replay'] || '') }}",
+        "options": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000002",
+      "name": "Drop redelivered events",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Classify the lead. Answer with exactly one of: sales, support, partnership, spam.\"},\n    {\"role\": \"user\", \"content\": {{ JSON.stringify($json.body.message) }} }\n  ]\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000003",
+      "name": "Classify lead (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "openAiApi": { "id": "sample-cred-3", "name": "OpenAI (credential store)" }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "event_id", "value": "={{ $('Lead webhook').item.json.body.event_id }}", "type": "string" },
+            { "id": "a2", "name": "email", "value": "={{ $('Lead webhook').item.json.body.email }}", "type": "string" },
+            { "id": "a3", "name": "label", "value": "={{ $json.choices[0].message.content.trim().toLowerCase() }}", "type": "string" },
+            { "id": "a4", "name": "received_at", "value": "={{ $now.toISO() }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000004",
+      "name": "Shape row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [720, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ ['sales','support','partnership','spam'].includes($json.label) }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000005",
+      "name": "Label allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [960, 0]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "__rl": true, "mode": "id", "value": "SAMPLE_SPREADSHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Leads" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": ["event_id"]
+        },
+        "options": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000006",
+      "name": "Upsert Leads sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1200, -100],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "sample-cred-1", "name": "Sample Google account" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "__rl": true, "mode": "id", "value": "SAMPLE_SPREADSHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Dead letter" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $('Lead webhook').item.json.body.event_id }}",
+            "payload": "={{ JSON.stringify($('Lead webhook').item.json.body) }}",
+            "reason": "={{ $json.error ? $json.error.message : 'label not allowed: ' + $json.label }}",
+            "failed_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": ["event_id"]
+        },
+        "options": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000007",
+      "name": "Dead-letter row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1200, 150],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "sample-cred-1", "name": "Sample Google account" }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": { "__rl": true, "mode": "name", "value": "#lead-intake-alerts" },
+        "text": "=Lead intake: event {{ $('Lead webhook').item.json.body.event_id }} parked in Dead letter. Replay after fixing the cause.",
+        "otherOptions": {}
+      },
+      "id": "1c7e2f3a-0000-4000-8000-000000000008",
+      "name": "Alert on-call",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1440, 150],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "slackApi": { "id": "sample-cred-4", "name": "Sample Slack bot" }
+      }
+    }
+  ],
+  "connections": {
+    "Lead webhook": { "main": [[{ "node": "Drop redelivered events", "type": "main", "index": 0 }]] },
+    "Drop redelivered events": { "main": [[{ "node": "Classify lead (OpenAI)", "type": "main", "index": 0 }]] },
+    "Classify lead (OpenAI)": {
+      "main": [
+        [{ "node": "Shape row", "type": "main", "index": 0 }],
+        [{ "node": "Dead-letter row", "type": "main", "index": 0 }]
+      ]
+    },
+    "Shape row": { "main": [[{ "node": "Label allowed?", "type": "main", "index": 0 }]] },
+    "Label allowed?": {
+      "main": [
+        [{ "node": "Upsert Leads sheet", "type": "main", "index": 0 }],
+        [{ "node": "Dead-letter row", "type": "main", "index": 0 }]
+      ]
+    },
+    "Upsert Leads sheet": {
+      "main": [
+        [],
+        [{ "node": "Dead-letter row", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dead-letter row": {
+      "main": [
+        [{ "node": "Alert on-call", "type": "main", "index": 0 }],
+        [{ "node": "Alert on-call", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "SAMPLE_ERROR_WORKFLOW_ID",
+    "executionTimeout": 120,
+    "saveDataErrorExecution": "all"
+  },
+  "active": false,
+  "meta": { "note": "Fixed version of the fictional sample workflow. Credentials are references to the n8n credential store, not secrets." }
+}

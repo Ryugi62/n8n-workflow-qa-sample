@@ -1,0 +1,90 @@
+{
+  "name": "Lead intake - classify and log (SAMPLE, fictional)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "0b6f1d2e-0000-4000-8000-000000000001",
+      "name": "Lead webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "00000000-0000-4000-8000-00000000abcd"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-EXAMPLE-not-a-real-key-0000000000"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Classify the lead as sales, support, partnership or spam. Answer with one word.\"},\n    {\"role\": \"user\", \"content\": {{ JSON.stringify($json.body.message) }} }\n  ]\n}",
+        "options": {}
+      },
+      "id": "0b6f1d2e-0000-4000-8000-000000000002",
+      "name": "Classify lead (OpenAI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "event_id", "value": "={{ $('Lead webhook').item.json.body.event_id }}", "type": "string" },
+            { "id": "a2", "name": "email", "value": "={{ $('Lead webhook').item.json.body.email }}", "type": "string" },
+            { "id": "a3", "name": "label", "value": "={{ $json.choices[0].message.content }}", "type": "string" },
+            { "id": "a4", "name": "received_at", "value": "={{ $now.toISO() }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b6f1d2e-0000-4000-8000-000000000003",
+      "name": "Shape row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "SAMPLE_SPREADSHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Leads" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "0b6f1d2e-0000-4000-8000-000000000004",
+      "name": "Append to Leads sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [720, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "sample-cred-1", "name": "Sample Google account" }
+      }
+    }
+  ],
+  "connections": {
+    "Lead webhook": { "main": [[{ "node": "Classify lead (OpenAI)", "type": "main", "index": 0 }]] },
+    "Classify lead (OpenAI)": { "main": [[{ "node": "Shape row", "type": "main", "index": 0 }]] },
+    "Shape row": { "main": [[{ "node": "Append to Leads sheet", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "meta": { "note": "Fictional workflow written for a public QA sample. No real customer, data or credentials." }
+}
